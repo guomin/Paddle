@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2016 Baidu, Inc. All Rights Reserved
+# Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,13 +18,17 @@ cfg=trainer_config.lr.py
 #cfg=trainer_config.emb.py
 #cfg=trainer_config.cnn.py
 #cfg=trainer_config.lstm.py
+#cfg=trainer_config.bidi-lstm.py
+#cfg=trainer_config.db-lstm.py
+#cfg=trainer_config.resnet-lstm.py
 paddle train \
   --config=$cfg \
   --save_dir=./output \
   --trainer_count=4 \
-  --log_period=20 \
+  --log_period=100 \
   --num_passes=15 \
   --use_gpu=false \
   --show_parameter_stats_period=100 \
   --test_all_data_in_one_period=1 \
   2>&1 | tee 'train.log'
+paddle usage -l "train.log" -e $? -n "quick_start_${cfg}" >/dev/null 2>&1

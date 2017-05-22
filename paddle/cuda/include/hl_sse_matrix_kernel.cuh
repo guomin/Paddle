@@ -1,4 +1,4 @@
-/* Copyright (c) 2016 Baidu, Inc. All Rights Reserve.
+/* Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserve.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ limitations under the License. */
 
 #define VECTOR_SIZE     16
 
-#ifndef HPPL_TYPE_DOUBLE
+#ifndef PADDLE_TYPE_DOUBLE
 /* number of float in vector */
 #define     VECTOR_LEN      4
 #define     VECTOR_SET      _mm_set_ps1
@@ -41,7 +41,7 @@ inline bool hl_check_align(void *ptr) {
   return hl_check_align(reinterpret_cast<size_t>(ptr));
 }
 
-#ifndef HPPL_TYPE_DOUBLE
+#ifndef PADDLE_TYPE_DOUBLE
 template <class Agg>
 inline real hl_agg_op(Agg agg, vecType mm) {
   __m128 lo = _mm_unpacklo_ps(mm, mm);

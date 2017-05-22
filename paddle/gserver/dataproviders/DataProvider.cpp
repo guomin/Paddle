@@ -1,4 +1,4 @@
-/* Copyright (c) 2016 Baidu, Inc. All Rights Reserve.
+/* Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserve.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,15 +12,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
-
 #include "DataProvider.h"
 
-#include "paddle/utils/Util.h"
-#include "paddle/utils/StringUtil.h"
-#include "paddle/utils/Logging.h"
-#include <algorithm>
 #include <unistd.h>
+#include <algorithm>
 #include "ProtoDataProvider.h"
+#include "paddle/utils/Logging.h"
+#include "paddle/utils/StringUtil.h"
+#include "paddle/utils/Util.h"
 
 namespace paddle {
 
@@ -57,7 +56,8 @@ void BufferBatch::clone(DataBatch* srcBatch, bool useGpu) {
   }
 }
 
-DoubleBuffer::DoubleBuffer(DataProvider* dataPool, bool useGpu,
+DoubleBuffer::DoubleBuffer(DataProvider* dataPool,
+                           bool useGpu,
                            int64_t batchSize) {
   batchSize_ = batchSize;
   dataPool_ = dataPool;
@@ -110,6 +110,9 @@ void DoubleBuffer::removeOneBatch(DataBatch* dataBatch) {
 }
 
 void DoubleBuffer::insertOneBatch(DataBatch* batch) {
+  while (!bufferQueue_->waitNotEmptyFor(2 /* seconds */)) {  // time out
+    if (stopping_) return;
+  }
   BufferBatch* bufBatch = bufferQueue_->dequeue();
   // clone and copy the data from an Threadlocal Variable
   bufBatch->clone(batch, useGpu_);
@@ -127,9 +130,10 @@ void DoubleBuffer::asyncLoadBatch() {
     taskReadySem_.wait();
     if (stopping_) break;
 
-    while (batchSize_ == 0) {
+    while (batchSize_ == 0 && !stopping_) {
       usleep(5);
     }
+    if (stopping_) break;
 
     do {
       DataBatch newBatch;
@@ -138,7 +142,7 @@ void DoubleBuffer::asyncLoadBatch() {
         actualSize = dataPool_->getNextBatchInternal(batchSize_, &newBatch);
       }
       insertOneBatch(&newBatch);
-    } while (actualSize > 0);
+    } while (actualSize > 0 && !stopping_);
   }
 }
 
@@ -150,7 +154,7 @@ void DoubleBuffer::startAsyncLoad() {
 }
 
 ClassRegistrar<DataProvider, DataConfig, ModelConfig, bool>
-DataProvider::registrar_;
+    DataProvider::registrar_;
 
 DataProvider* DataProvider::create(const DataConfig& config,
                                    const ModelConfig& modelConfig,
@@ -177,7 +181,8 @@ int64_t DataProvider::getNextBatch(int64_t size, DataBatch* batch) {
   for (int i = 0; i < config_.constant_slots_size(); ++i) {
     MemoryHandlePtr handle =
         constantSlots[i] ? constantSlots[i]->getMemoryHandle() : nullptr;
-    Matrix::resizeOrCreate(constantSlots[i], batchSize,
+    Matrix::resizeOrCreate(constantSlots[i],
+                           batchSize,
                            1,         // = width
                            false,     // = trans
                            useGpu_);  // = useGpu
@@ -211,7 +216,8 @@ void DataProvider::initAsyncLoader() {
 }
 
 SimpleDataProviderBase::SimpleDataProviderBase(const DataConfig& config,
-                                               bool useGpu, bool withInfo)
+                                               bool useGpu,
+                                               bool withInfo)
     : DataProvider(config, useGpu) {
   /* initialize the size of a sample, and the buffer */
   sampleDim_ = config_.feat_dim() * (2 * config_.context_len() + 1);
@@ -332,7 +338,8 @@ int64_t SimpleDataProviderBase::fillBuffer() {
   sampleNumInBuf_ =
       n + fillBufferImp(hInputDataBuf_->getData() + n * sampleDim_,
                         hInputLabelBuf_->getData() + n,
-                        hInputInfoBuf_->getData() + n, bufferCapacity_ - n);
+                        hInputInfoBuf_->getData() + n,
+                        bufferCapacity_ - n);
 
   /* for stachastic gradient training */
   if (!skipShuffle_) {
@@ -352,11 +359,14 @@ SimpleDataProvider::SimpleDataProvider(const DataConfig& config, bool useGpu)
 
 SimpleDataProvider::~SimpleDataProvider() {}
 
-int64_t SimpleDataProvider::fillBufferImp(real* data, int* label, int* info,
+int64_t SimpleDataProvider::fillBufferImp(real* data,
+                                          int* label,
+                                          int* info,
                                           int64_t size) {
   (void)info;
   int64_t n = std::min<int64_t>(labels_.size() - currentSampleIndex_, size);
-  memcpy(data, &data_[currentSampleIndex_ * sampleDim_],
+  memcpy(data,
+         &data_[currentSampleIndex_ * sampleDim_],
          n * sampleDim_ * sizeof(real));
   memcpy(label, &labels_[currentSampleIndex_], sizeof(int) * n);
   currentSampleIndex_ += n;

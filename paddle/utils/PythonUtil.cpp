@@ -1,4 +1,4 @@
-/* Copyright (c) 2016 Baidu, Inc. All Rights Reserve.
+/* Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserve.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,17 +12,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
-
 #include "PythonUtil.h"
-#include <sstream>
 #include <signal.h>
+#include <sstream>
 
 namespace paddle {
 
 #ifdef PADDLE_NO_PYTHON
 
-P_DEFINE_string(python_path, "", "python path");
-P_DEFINE_string(python_bin, "python2.7", "python bin");
+DEFINE_string(python_path, "", "python path");
+DEFINE_string(python_bin, "python2.7", "python bin");
 
 constexpr int kExecuteCMDBufLength = 204800;
 
@@ -33,7 +32,8 @@ int executeCMD(const char* cmd, char* result) {
   strncpy(ps, cmd, kExecuteCMDBufLength);
   if ((ptr = popen(ps, "r")) != NULL) {
     size_t count = fread(bufPs, 1, kExecuteCMDBufLength, ptr);
-    memcpy(result, bufPs,
+    memcpy(result,
+           bufPs,
            count - 1);  // why count-1: remove the '\n' at the end
     result[count] = 0;
     pclose(ptr);
@@ -71,23 +71,27 @@ std::string callPythonFunc(const std::string& moduleName,
 
 #else
 
-
 static std::recursive_mutex g_pyMutex;
 
 PyGuard::PyGuard() : guard_(g_pyMutex) {}
 
-
-static void printPyErrorStack(std::ostream& os, bool withEndl = false) {
-  PyObject * ptype, *pvalue, *ptraceback;
+static void printPyErrorStack(std::ostream& os,
+                              bool withEndl = false,
+                              bool withPyPath = true) {
+  PyObject *ptype, *pvalue, *ptraceback;
   PyErr_Fetch(&ptype, &pvalue, &ptraceback);
   PyErr_NormalizeException(&ptype, &pvalue, &ptraceback);
   PyErr_Clear();
+  if (withPyPath) {
+    os << "Current PYTHONPATH: " << py::repr(PySys_GetObject(strdup("path")));
+    if (withEndl) {
+      os << std::endl;
+    }
+  }
   PyTracebackObject* obj = (PyTracebackObject*)ptraceback;
 
-  os << "Python Error: " << PyString_AsString(PyObject_Str(ptype))
-            <<" : " << (pvalue == NULL ? ""
-                                       : PyString_AsString(
-                                           PyObject_Str(pvalue)));
+  os << "Python Error: " << PyString_AsString(PyObject_Str(ptype)) << " : "
+     << (pvalue == NULL ? "" : PyString_AsString(PyObject_Str(pvalue)));
   if (withEndl) {
     os << std::endl;
   }
@@ -97,8 +101,8 @@ static void printPyErrorStack(std::ostream& os, bool withEndl = false) {
   }
   while (obj != NULL) {
     int line = obj->tb_lineno;
-    const char* filename = PyString_AsString(
-          obj->tb_frame->f_code->co_filename);
+    const char* filename =
+        PyString_AsString(obj->tb_frame->f_code->co_filename);
     os << "            " << filename << " : " << line;
     if (withEndl) {
       os << std::endl;
@@ -114,10 +118,7 @@ PyObjectPtr callPythonFuncRetPyObj(const std::string& moduleName,
                                    const std::string& funcName,
                                    const std::vector<std::string>& args) {
   PyGuard guard;
-  PyObjectPtr pyModuleName(PyString_FromString(moduleName.c_str()));
-  CHECK_PY(pyModuleName) << "Import PyModule failed" << moduleName;
-  PyObjectPtr pyModule(PyImport_Import(pyModuleName.get()));
-  CHECK_PY(pyModule) << "Import Python Module"<< moduleName << " failed.";
+  PyObjectPtr pyModule = py::import(moduleName);
   PyObjectPtr pyFunc(PyObject_GetAttrString(pyModule.get(), funcName.c_str()));
   CHECK_PY(pyFunc) << "GetAttrString failed.";
   PyObjectPtr pyArgs(PyTuple_New(args.size()));
@@ -139,11 +140,12 @@ std::string callPythonFunc(const std::string& moduleName,
 }
 
 PyObjectPtr createPythonClass(
-    const std::string& moduleName, const std::string& className,
+    const std::string& moduleName,
+    const std::string& className,
     const std::vector<std::string>& args,
     const std::map<std::string, std::string>& kwargs) {
   PyGuard guard;
-  PyObjectPtr pyModule(PyImport_ImportModule(moduleName.c_str()));
+  PyObjectPtr pyModule = py::import(moduleName);
   LOG(INFO) << "createPythonClass moduleName.c_str:" << moduleName.c_str();
   CHECK_PY(pyModule) << "Import module " << moduleName << " failed.";
   PyObjectPtr pyDict(PyModule_GetDict(pyModule.get()));
@@ -160,39 +162,47 @@ PyObjectPtr createPythonClass(
   PyObjectPtr kwargsObjectList(PyDict_New());
   for (auto& x : kwargs) {
     PyObjectPtr pyArg(Py_BuildValue("s#", x.second.c_str(), x.second.length()));
-    PyDict_SetItemString(kwargsObjectList.get(), x.first.c_str(),
-                         pyArg.release());
+    PyDict_SetItemString(
+        kwargsObjectList.get(), x.first.c_str(), pyArg.release());
   }
 
-  PyObjectPtr pyInstance(PyInstance_New(pyClass.get(), argsObjectList.release(),
-                                        kwargsObjectList.release()));
+  PyObjectPtr pyInstance(PyInstance_New(
+      pyClass.get(), argsObjectList.release(), kwargsObjectList.release()));
   CHECK_PY(pyInstance) << "Create class " << className << " failed.";
   return pyInstance;
 }
 
-
 namespace py {
-char* repr(PyObject* obj) {
-  return PyString_AsString(PyObject_Repr(obj));
-}
+char* repr(PyObject* obj) { return PyString_AsString(PyObject_Repr(obj)); }
 
 std::string getPyCallStack() {
   std::ostringstream os;
   printPyErrorStack(os, true);
   return os.str();
 }
+
+PyObjectPtr import(const std::string& moduleName) {
+  auto module = PyImport_ImportModule(moduleName.c_str());
+  CHECK_PY(module) << "Import " << moduleName << "Error";
+  return PyObjectPtr(module);
+}
+
 }  // namespace py
 
 #endif
-
+extern "C" {
+extern const char enable_virtualenv_py[];
+}
 void initPython(int argc, char** argv) {
 #ifndef PADDLE_NO_PYTHON
   Py_SetProgramName(argv[0]);
   Py_Initialize();
   PySys_SetArgv(argc, argv);
-
   // python blocks SIGINT. Need to enable it.
   signal(SIGINT, SIG_DFL);
+
+  // Manually activate virtualenv when user is using virtualenv
+  PyRun_SimpleString(enable_virtualenv_py);
 #endif
 }
 
